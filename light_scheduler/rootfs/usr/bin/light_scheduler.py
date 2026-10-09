@@ -2,7 +2,7 @@
 """Light Scheduler — M1 skeleton.
 
 Pure standard library (no pip). Talks to Home Assistant over the
-external REST API and serves the ingress panel.
+Supervisor API and serves the ingress panel.
 
 M1 implements the **step-and-fade** ramp model (scope decision D5): at each
 keyframe's time the target is sent together with a ``transition`` and the lamp
@@ -49,12 +49,17 @@ def log(msg):
 
 
 # --------------------------------------------------------------------------- #
-# Home Assistant REST client (external API)
+# Home Assistant REST client (Supervisor API)
 # --------------------------------------------------------------------------- #
 def _ha_request(method, path, body=None):
-    """Call the external HA API directly (not through Supervisor)."""
-    token = os.environ.get("LONG_LIVED_ACCESS_TOKEN", "")
-    url = "http://homeassistant:8123/api/" + path
+    """Call the Supervisor API to proxy HA requests.
+
+    The Supervisor exposes /api/ (not /core/api/) which proxies the
+    Home Assistant external API.  This is the documented way for Apps
+    to talk to HA.
+    """
+    token = os.environ.get("SUPERVISOR_TOKEN", "")
+    url = "http://supervisor/api/" + path
     data = None
     headers = {"Authorization": "Bearer " + token}
     if body is not None:
@@ -72,9 +77,9 @@ def _ha_request(method, path, body=None):
 
 
 def _post_service(domain, service, data):
-    """Call a HA service through the external API.
+    """Call a HA service through the Supervisor API.
 
-    The external API at /api/services/{domain}/{service} expects the
+    The Supervisor API at /api/services/{domain}/{service} expects the
     payload wrapped in a 'data' key.
     """
     _ha_request("POST", "services/" + domain + "/" + service, {"data": data})
