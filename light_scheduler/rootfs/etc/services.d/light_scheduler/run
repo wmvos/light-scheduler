@@ -1,5 +1,21 @@
 #!/usr/bin/with-contenv bashio
-# s6-svscan
+# ==============================================================================
+# Light Scheduler — s6 service entrypoint
+#
+# Started by s6-supervised (config.yaml `init: false`); s6 keeps it alive and
+# restarts it automatically if the process ever exits. `with-contenv` exports
+# the Supervisor environment (including SUPERVISOR_TOKEN); `bashio` exposes the
+# HA config helpers.
+# ==============================================================================
 
-bashio::log.info "Light Scheduler starting (light='$LS_LIGHT')"
-exec /usr/bin/python3 /usr/bin/light_scheduler.py
+# Export LS_LIGHT from user config if set (empty string is fine — Python handles it).
+_light="$(bashio::config 'light' 2>/dev/null || echo '')"
+export LS_LIGHT="$_light"
+if [ -n "$_light" ]; then
+    bashio::log.info "Light Scheduler starting (light='${LS_LIGHT}')"
+else
+    bashio::log.info "Light Scheduler starting (light option not set — will read from /data/options.json)"
+fi
+
+# Long-running: scheduler loop + ingress HTTP server.
+exec /usr/bin/light_scheduler.py
