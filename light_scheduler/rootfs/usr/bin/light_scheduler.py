@@ -72,13 +72,12 @@ def _ha_request(method, path, body=None):
 
 
 def _post_service(domain, service, data):
-    """Call a HA service.
+    """Call a HA service through the Supervisor core API proxy.
 
-    The Supervisor core API proxy at /api/ forwards service calls to
-    /api/services/{domain}/{service}.  The body is the raw service data
-    (not wrapped in a 'data' key).
+    The proxy at /api/services/{domain}/{service} expects the payload
+    wrapped in a 'data' key.
     """
-    _ha_request("POST", "services/" + domain + "/" + service, data)
+    _ha_request("POST", "services/" + domain + "/" + service, {"data": data})
 
 
 def ha_get_state(entity):
