@@ -311,38 +311,37 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
 
 
+# --------------------------------------------------------------------------- #
+# Entry point
+# --------------------------------------------------------------------------- #
 def main():
     light = resolve_light()
     schedule = load_schedule()
-    app = AppState(light, schedule)
+    state = AppState(light, schedule)
+    Handler.app = state
 
-    log(
-        "starting: light=%s schedule=%r keyframes=%d tick=%ds"
-        % (light, schedule.get("name", ""), len(schedule.get("keyframes", [])), TICK_SECONDS)
-    )
-
+    log("starting: light=%s schedule=%r keyframes=%d tick=%ds"
+        % (light or "<none>", schedule.get("name"), len(schedule.get("keyframes", [])), TICK_SECONDS))
     if not light:
         log("WARNING: no light configured — set the app 'light' option. Scheduling is idle until then.")
 
-    Handler.app = app
-
+    # Ingress server runs in a daemon thread; the scheduler owns the main loop.
     server = ThreadingHTTPServer((INGRESS_HOST, INGRESS_PORT), Handler)
+    threading.Thread(target=server.serve_forever, name="ingress", daemon=True).start()
     log("ingress listening on %s:%d" % (INGRESS_HOST, INGRESS_PORT))
 
-    # Start scheduler loop
-    import sys
-    def scheduler_loop():
+    try:
         while True:
             try:
-                app.tick(datetime.now())
-            except Exception as exc:
-                log("tick error: %s" % exc)
+                state.tick(datetime.now())
+            except Exception as exc:  # never let one bad tick kill the app
+                log("tick error: %r" % (exc,))
             time.sleep(TICK_SECONDS)
-
-    sched_thread = threading.Thread(target=scheduler_loop, name="scheduler")
-    sched_thread.start()
-
-    server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.shutdown()
+        log("shutting down")
 
 
 if __name__ == "__main__":
