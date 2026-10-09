@@ -1,0 +1,10 @@
+# Translations for the Light Scheduler app's Supervisor options form.
+# Keyed to the `light` option in config.yaml (schema: "str?").
+# Additional options get their `_name` / `_description` entries here as they land.
+config:
+  light:
+    name: Light entity
+    description: >-
+      The `light.*` entity to control (e.g. `light.living_room_strip`).
+      In this milestone only one light is scheduled; multiple lights per
+      schedule arrive in a later milestone. Leave blank to run idle.

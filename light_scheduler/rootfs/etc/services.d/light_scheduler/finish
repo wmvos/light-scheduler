@@ -1,0 +1,6 @@
+#!/usr/bin/with-contenv bashio
+# ==============================================================================
+# Light Scheduler — s6 finish (runs when the service stops)
+# ==============================================================================
+bashio::log.info "Light Scheduler stopping"
+exit 0
