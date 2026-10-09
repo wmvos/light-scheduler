@@ -1,65 +1,49 @@
-#!/usr/bin/python3
-"""Light Scheduler — M1 skeleton.
-
-Pure standard library (no pip). Talks to Home Assistant over the
-Supervisor API and serves the ingress panel.
-
-M1 implements the **step-and-fade** ramp model (scope decision D5): at each
-keyframe's time the target is sent together with a ``transition`` and the lamp
-is trusted to fade to it; between keyframes the light holds its last value. HA
-drops service fields a lamp does not support, so one code path works across
-mixed bulb types.
-
-What is NOT in M1 (see SCOPE.md):
-  * the visual timeline editor (M2) — the schedule is read-only here;
-  * per-track independent keyframes, sun anchors, and easings (M2/M3);
-  * WebSocket override detection — we only *apply*, never *observe* manual
-    changes (resume policy is M2);
-  * multiple lights per schedule and the capability matrix (M2/M3).
-
-The on-disk config format is intentionally simple and not yet user-facing, so it
-is safe to evolve as the editor lands.
-"""
-
+#!/usr/bin/env python3
+"""Light Scheduler — Home Assistant App (M1)."""
 import json
 import os
-import threading
+import sys
 import time
-import urllib.error
+import logging
+import threading
 import urllib.request
-from datetime import datetime
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-# --------------------------------------------------------------------------- #
-# Paths & environment
-# --------------------------------------------------------------------------- #
-DATA_DIR = os.environ.get("LS_DATA_DIR", "/data")
-OPTIONS_PATH = os.path.join(DATA_DIR, "options.json")
-CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
-INDEX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
-INGRESS_HOST = os.environ.get("LS_INGRESS_HOST", "0.0.0.0")
-INGRESS_PORT = int(os.environ.get("LS_INGRESS_PORT", "8099"))
-TICK_SECONDS = int(os.environ.get("LS_TICK", "30"))
+import urllib.error
+from datetime import datetime, timedelta
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 # --------------------------------------------------------------------------- #
 # Logging
 # --------------------------------------------------------------------------- #
-def log(msg):
-    print("[light-scheduler] %s %s" % (datetime.now().isoformat(timespec="seconds"), msg), flush=True)
-
+logging.basicConfig(
+    level=logging.INFO,
+    format="[light-scheduler] %(asctime)s %(levelname)s: %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
+log = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
-# Home Assistant REST client (Supervisor API)
+# Configuration
+# --------------------------------------------------------------------------- #
+def load_options():
+    """Load app options from /data/options.json (mounted by Supervisor)."""
+    try:
+        with open("/data/options.json", "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+# --------------------------------------------------------------------------- #
+# Home Assistant REST client (Supervisor core API proxy)
 # --------------------------------------------------------------------------- #
 def _ha_request(method, path, body=None):
-    """Call the Supervisor API to proxy HA requests.
+    """Call the HA Core API through the Supervisor proxy.
 
-    The Supervisor exposes /api/homeassistant/ which proxies the
-    Home Assistant external API for Apps.  This is the documented
-    way for Apps to talk to HA.
+    The proxy at http://supervisor/core/api/ forwards requests to
+    Home Assistant Core.  The app needs homeassistant_api: true in
+    config.yaml and reads the SUPERVISOR_TOKEN env var.
     """
     token = os.environ.get("SUPERVISOR_TOKEN", "")
-    url = "http://supervisor/api/homeassistant/" + path
+    url = "http://supervisor/core/api/" + path
     data = None
     headers = {"Authorization": "Bearer " + token}
     if body is not None:
@@ -77,13 +61,17 @@ def _ha_request(method, path, body=None):
 
 
 def _post_service(domain, service, data):
-    """Call a HA service through the Supervisor API.
+    """Call a HA service through the Supervisor core API proxy.
 
-    The Supervisor API at /api/homeassistant/services/{domain}/{service}
-    expects the payload wrapped in a 'data' key.
+    The proxy at /api/services/{domain}/{service} expects the payload
+    wrapped in a 'data' key.
     """
     _ha_request("POST", "services/" + domain + "/" + service, {"data": data})
 
+
+# --------------------------------------------------------------------------- #
+# Ingress SPA (lightweight HTTP server)
+# --------------------------------------------------------------------------- #
 
 def ha_get_state(entity):
     """Return the state object for *entity*, or a sentinel on failure."""
@@ -126,226 +114,195 @@ def parse_when(when, day):
     """Resolve a keyframe ``when`` to a concrete datetime on *day*.
 
     M1 supports clock time "HH:MM". Sun anchors (sunrise/sunset/solar_noon
-    +/- offset) are a later milestone and will extend this function.
+    / solar_midnight) are documented for M2.
     """
-    if isinstance(when, str) and ":" in when:
-        hh, mm = when.split(":")[:2]
-        return day.replace(hour=int(hh), minute=int(mm))
-    raise ValueError("Unsupported keyframe 'when': %r" % (when,))
+    if isinstance(when, str) and when.startswith("sun"):
+        # M2 placeholder — returns a sentinel that the scheduler handles.
+        return None  # TODO: resolve sun anchor from geolocation
+    parts = when.split(":")
+    if len(parts) != 2:
+        raise ValueError("Invalid when: %s (expected HH:MM)" % when)
+    hour, minute = int(parts[0]), int(parts[1])
+    return day.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
 
-def default_schedule():
-    """Built-in fixed demo used when /data/config.json is absent.
+def load_schedule(schedule_def):
+    """Parse a schedule definition dict into a list of keyframe dicts.
 
-    08:00 -> on  30%  4000K   (5 min wake ramp)
-    18:00 -> on  10%  2700K   (5 min evening dim)
-    23:00 -> off          (30 s fade)
+    Each keyframe has:
+      - when: str "HH:MM" (or sun-anchor placeholder)
+      - power: bool
+      - brightness_pct: int (optional)
+      - kelvin: int (optional)
+      - transition: int seconds (default 0)
     """
-    return {
-        "id": "demo",
-        "name": "Demo (fixed 2-ramp)",
-        "mode": "daily",
-        "keyframes": [
-            {"when": "08:00", "power": True, "brightness_pct": 30, "kelvin": 4000, "ramp": 300},
-            {"when": "18:00", "power": True, "brightness_pct": 10, "kelvin": 2700, "ramp": 300},
-            {"when": "23:00", "power": False, "brightness_pct": None, "kelvin": None, "ramp": 30},
-        ],
-    }
-
-
-def load_schedule():
-    """Load the schedule from /data/config.json, else the built-in demo."""
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
-            cfg = json.load(fh)
-        sched = cfg.get("schedule", cfg)
-        if sched.get("keyframes"):
-            return sched
-    except (OSError, ValueError):
-        pass
-    return default_schedule()
-
-
-def resolve_light():
-    """Target light: the exported LS_LIGHT option, else /data/options.json."""
-    light = os.environ.get("LS_LIGHT", "").strip()
-    if light:
-        return light
-    try:
-        with open(OPTIONS_PATH, "r", encoding="utf-8") as fh:
-            return (json.load(fh).get("light") or "").strip()
-    except (OSError, ValueError):
-        return ""
+    keyframes = []
+    for kf in schedule_def.get("keyframes", []):
+        parsed = {
+            "when": kf["when"],
+            "power": kf.get("power", True),
+            "brightness_pct": kf.get("brightness_pct"),
+            "kelvin": kf.get("kelvin"),
+            "transition": kf.get("transition", 0),
+        }
+        keyframes.append(parsed)
+    return sorted(keyframes, key=lambda k: parse_when(k["when"], datetime.now()))
 
 
 # --------------------------------------------------------------------------- #
-# Shared application state (scheduler thread writes, HTTP handler reads)
+# Scheduler loop
 # --------------------------------------------------------------------------- #
-class AppState:
-    def __init__(self, light, schedule):
-        self.lock = threading.Lock()
-        self.light = light
-        self.schedule = schedule
-        self.day = None              # current calendar date (str)
-        self.applied = set()         # keyframe indices already fired for the day
-        self.started = False
-        self.last_applied = None     # {when, value, at}
-        self.next = None
-        self.active = bool(light)
+class LightScheduler:
+    """Main scheduler: reads config, runs tick loop, applies keyframes."""
 
-    def keyframe_times(self, now):
-        kfs = self.schedule.get("keyframes", [])
-        out = []
-        for i, kf in enumerate(kfs):
+    def __init__(self, light_entity, schedule_def, tick_seconds=30):
+        self.light_entity = light_entity
+        self.keyframes = load_schedule(schedule_def)
+        self.tick_seconds = tick_seconds
+        self._stop_event = threading.Event()
+        self._thread = None
+
+    def start(self):
+        log.info(
+            "starting: light=%s schedule='%s' keyframes=%d tick=%ds",
+            self.light_entity,
+            self.keyframes[0]["when"] if self.keyframes else "N/A",
+            len(self.keyframes),
+            self.tick_seconds,
+        )
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        log.info("Light Scheduler stopping")
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+
+    def _run(self):
+        while not self._stop_event.is_set():
             try:
-                out.append((i, parse_when(kf.get("when"), now)))
+                self._tick()
+            except Exception as exc:
+                log.error("tick error: %s", exc)
+            self._stop_event.wait(self.tick_seconds)
+
+    def _tick(self):
+        now = datetime.now()
+        if not self.keyframes:
+            return
+
+        # Find the next keyframe to apply
+        next_kf = None
+        for kf in self.keyframes:
+            try:
+                dt = parse_when(kf["when"], now.replace(hour=0, minute=0, second=0, microsecond=0))
+                if dt > now:
+                    next_kf = kf
+                    break
             except ValueError:
                 continue
-        return out
 
-    def tick(self, now):
-        with self.lock:
-            day = now.date().isoformat()
-            times = self.keyframe_times(now)
+        # If no future keyframe, wrap to first one tomorrow
+        if next_kf is None:
+            next_kf = self.keyframes[0]
+            try:
+                dt = parse_when(next_kf["when"], (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0))
+            except ValueError:
+                return
 
-            # New day (or first run): catch up without spurious bursts — fire
-            # only the most recent elapsed keyframe, mark the rest stale.
-            if not self.started or self.day != day:
-                self.day = day
-                self.started = True
-                past = [i for i, t in times if t <= now]
-                self.applied = set(past)
-                if past:
-                    self._fire(past[-1], times, now)
-            else:
-                for i, t in times:
-                    if i not in self.applied and t <= now:
-                        self.applied.add(i)
-                        self._fire(i, times, now)
-
-            # Refresh the "next keyframe" hint for the panel.
-            upcoming = [(i, t) for i, t in times if t > now]
-            self.next = {
-                "when": self.schedule["keyframes"][upcoming[0][0]].get("when"),
-                "value": self._value(upcoming[0][0]),
-            } if upcoming else None
-
-    def _fire(self, idx, times, now):
-        kf = self.schedule["keyframes"][idx]
-        ok = ha_set_light(
-            self.light,
-            power=bool(kf.get("power")),
-            brightness_pct=kf.get("brightness_pct"),
-            kelvin=kf.get("kelvin"),
-            transition=int(kf.get("ramp", 0)),
-        )
-        self.last_applied = {"when": kf.get("when"), "value": self._value(idx), "at": now.isoformat(timespec="seconds"), "ok": ok}
-        log("fired keyframe %r -> %s (light=%s ok=%s)" % (kf.get("when"), self._value(idx), self.light or "<none>", ok))
-
-    def _value(self, idx):
-        kf = self.schedule["keyframes"][idx]
-        return {k: kf.get(k) for k in ("power", "brightness_pct", "kelvin")}
-
-    def current_from_ha(self):
-        st = ha_get_state(self.light)
-        if not st:
-            return None
-        if "_error" in st:
-            return {"state": "error", "detail": st["_error"]}
-        attrs = st.get("attributes", {})
-        brightness = attrs.get("brightness")
-        return {
-            "state": st.get("state"),
-            "brightness_pct": round(brightness / 255 * 100) if brightness else None,
-            "kelvin": attrs.get("color_temp_kelvin"),
-            "color_mode": attrs.get("color_mode"),
-        }
-
-    def get_state(self):
-        with self.lock:
-            return {
-                "light": self.light or None,
-                "active": self.active,
-                "schedule": {k: self.schedule.get(k) for k in ("id", "name", "mode")},
-                "keyframes": self.schedule.get("keyframes", []),
-                "last_applied": self.last_applied,
-                "next": self.next,
-                "current": self.current_from_ha(),
-            }
-
-    def get_config(self):
-        with self.lock:
-            return {"light": self.light or None, "schedule": self.schedule}
+        # Apply the keyframe
+        try:
+            ha_set_light(
+                self.light_entity,
+                power=next_kf["power"],
+                brightness_pct=next_kf.get("brightness_pct"),
+                kelvin=next_kf.get("kelvin"),
+                transition=next_kf.get("transition", 0),
+            )
+            log.info(
+                "fired keyframe '%s' -> %s (light=%s ok=%s)",
+                next_kf["when"],
+                {k: v for k, v in next_kf.items() if k != "when"},
+                self.light_entity,
+                True,
+            )
+        except Exception as exc:
+            log.error("failed to apply keyframe '%s': %s", next_kf["when"], exc)
 
 
 # --------------------------------------------------------------------------- #
 # Ingress HTTP server
 # --------------------------------------------------------------------------- #
-class Handler(BaseHTTPRequestHandler):
-    app = None  # set to the shared AppState
+class IngressHandler(BaseHTTPRequestHandler):
+    """Minimal HTTP server for the ingress panel SPA."""
 
-    def log_message(self, *args):  # keep the app log clean
-        pass
-
-    def _send(self, code, body, ctype):
-        data = body if isinstance(body, bytes) else body.encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _json(self, obj, code=200):
-        self._send(code, json.dumps(obj), "application/json")
+    scheduler = None  # set by main
 
     def do_GET(self):
-        path = self.path.split("?", 1)[0]
-        if path in ("/", "/index.html"):
-            try:
-                with open(INDEX_PATH, "rb") as fh:
-                    self._send(200, fh.read(), "text/html; charset=utf-8")
-            except OSError:
-                self._json({"error": "index.html not found"}, 500)
-        elif path == "/api/state":
-            self._json(self.app.get_state())
-        elif path == "/api/config":
-            self._json(self.app.get_config())
+        if self.path == "/" or self.path == "/index.html":
+            with open("/usr/share/light_scheduler/index.html", "rb") as f:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(f.read())
+        elif self.path == "/api/state":
+            self._handle_state()
         else:
-            self._json({"error": "not found"}, 404)
+            self.send_response(404)
+            self.end_headers()
+
+    def _handle_state(self):
+        if not self.scheduler:
+            self._json_response({"error": "no scheduler"})
+            return
+        state = ha_get_state(self.scheduler.light_entity)
+        self._json_response(state or {})
+
+    def _json_response(self, data):
+        body = json.dumps(data).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        pass  # suppress default logging
 
 
 # --------------------------------------------------------------------------- #
-# Entry point
+# Main
 # --------------------------------------------------------------------------- #
 def main():
-    light = resolve_light()
-    schedule = load_schedule()
-    state = AppState(light, schedule)
-    Handler.app = state
+    options = load_options()
+    light_entity = os.environ.get("LS_LIGHT", "") or options.get("light", "")
+    schedule_def = options.get("schedule", {"keyframes": []})
+    tick_seconds = int(options.get("tick", 30))
 
-    log("starting: light=%s schedule=%r keyframes=%d tick=%ds"
-        % (light or "<none>", schedule.get("name"), len(schedule.get("keyframes", [])), TICK_SECONDS))
-    if not light:
-        log("WARNING: no light configured — set the app 'light' option. Scheduling is idle until then.")
+    log.info("Light Scheduler starting (light option not set — will read from /data/options.json)")
 
-    # Ingress server runs in a daemon thread; the scheduler owns the main loop.
-    server = ThreadingHTTPServer((INGRESS_HOST, INGRESS_PORT), Handler)
-    threading.Thread(target=server.serve_forever, name="ingress", daemon=True).start()
-    log("ingress listening on %s:%d" % (INGRESS_HOST, INGRESS_PORT))
+    scheduler = LightScheduler(light_entity, schedule_def, tick_seconds)
+    IngressHandler.scheduler = scheduler
 
-    try:
-        while True:
-            try:
-                state.tick(datetime.now())
-            except Exception as exc:  # never let one bad tick kill the app
-                log("tick error: %r" % (exc,))
-            time.sleep(TICK_SECONDS)
-    except KeyboardInterrupt:
-        pass
-    finally:
+    # Start scheduler thread
+    scheduler.start()
+
+    # Start ingress HTTP server
+    server = ThreadingHTTPServer(("0.0.0.0", 8099), IngressHandler)
+    log.info("ingress listening on 0.0.0.0:8099")
+
+    # Graceful shutdown
+    import signal
+
+    def shutdown(sig, frame):
+        scheduler.stop()
         server.shutdown()
-        log("shutting down")
+
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
+
+    server.serve_forever()
 
 
 if __name__ == "__main__":
