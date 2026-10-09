@@ -126,7 +126,7 @@ def parse_when(when, day):
     """
     if isinstance(when, str) and ":" in when:
         hh, mm = when.split(":")[:2]
-        return day.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+        return day.replace(hour=int(hh), minute=int(mm))
     raise ValueError("Unsupported keyframe 'when': %r" % (when,))
 
 
