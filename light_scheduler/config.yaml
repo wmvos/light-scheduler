@@ -1,6 +1,6 @@
 # https://developers.home-assistant.io/docs/apps/configuration#app-configuration
 name: Light Scheduler
-version: "0.1.4"
+version: "0.1.5"
 slug: light_scheduler
 description: Schedule on/off, brightness and color temperature of your lights on a visual daily/weekly timeline.
 url: "https://github.com/wmvos/light-scheduler/tree/main/light_scheduler"
@@ -15,7 +15,7 @@ options:
   light: ""
 schema:
   light: "str?"
-homeassistant_api: true
+long_lived_tokens: true
 ingress: true
 ingress_port: 8099
 panel_icon: mdi:led-strip-variant
