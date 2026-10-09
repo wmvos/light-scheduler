@@ -1,5 +1,5 @@
 # https://developers.home-assistant.io/docs/apps/configuration#app-dockerfile
-ARG BUILD_FROM=ghcr.io/home-assistant/base:3.23
+ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
 # Python 3 from the Alpine base. The app is pure-stdlib (no pip), so this is

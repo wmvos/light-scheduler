@@ -1,158 +1,153 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Light Scheduler</title>
-  <style>
-    :root {
-      --bg: #1a1a2e;
-      --surface: #16213e;
-      --accent: #0f3460;
-      --text: #e0e0e0;
-      --highlight: #e94560;
-    }
-
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      padding: 20px;
-    }
-
-    h1 {
-      text-align: center;
-      margin-bottom: 20px;
-      color: var(--highlight);
-    }
-
-    .status-panel {
-      background: var(--surface);
-      border-radius: 8px;
-      padding: 15px;
-      margin-bottom: 20px;
-    }
-
-    .status-row {
-      display: flex;
-      justify-content: space-between;
-      padding: 5px 0;
-      border-bottom: 1px solid var(--accent);
-    }
-
-    .status-row:last-child { border-bottom: none; }
-
-    .timeline {
-      background: var(--surface);
-      border-radius: 8px;
-      padding: 15px;
-      margin-bottom: 20px;
-    }
-
-    .timeline-bar {
-      height: 40px;
-      background: var(--accent);
-      border-radius: 4px;
-      position: relative;
-      margin: 10px 0;
-    }
-
-    .keyframe-marker {
-      position: absolute;
-      top: -5px;
-      width: 3px;
-      height: 50px;
-      background: var(--highlight);
-      transform: translateX(-50%);
-    }
-
-    .keyframe-label {
-      position: absolute;
-      top: 50px;
-      transform: translateX(-50%);
-      font-size: 11px;
-      color: var(--text);
-    }
-
-    .info {
-      text-align: center;
-      padding: 10px;
-      color: #888;
-    }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Light Scheduler</title>
+<style>
+  :root {
+    --bg: #0f1218; --panel: #171c26; --panel2: #1e2532;
+    --fg: #e6e9ef; --dim: #8b93a3; --accent: #ffb64d; --ok: #6ecf7b; --bad: #ff6b6b;
+    --line: #262e3d; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 20px 16px 60px; }
+  header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+  header h1 { font-size: 19px; margin: 0; font-weight: 650; }
+  .badge { font-size: 11px; color: var(--accent); border: 1px solid var(--accent);
+           border-radius: 20px; padding: 1px 9px; letter-spacing: .04em; }
+  .sub { color: var(--dim); font-size: 12px; margin-bottom: 18px; }
+  .grid { display: grid; grid-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .card h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); margin: 0 0 8px; }
+  .big { font-size: 22px; font-weight: 650; }
+  .big .unit { font-size: 13px; color: var(--dim); font-weight: 400; }
+  .kv { display: flex; justify-content: space-between; gap: 10px; margin-top: 6px; font-size: 13px; }
+  .kv span:first-child { color: var(--dim); }
+  .kv span:last-child { font-family: var(--mono); }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; }
+  .dot.on { background: var(--ok); } .dot.off { background: var(--dim); }
+  .dot.err { background: var(--bad); } .dot.idle { background: var(--accent); }
+  table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  th { color: var(--dim); font-weight: 500; text-transform: uppercase; font-size: 10px; letter-spacing: .06em; }
+  td { font-family: var(--mono); }
+  .muted { color: var(--dim); }
+  .banner { background: var(--panel2); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+            border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; }
+</style>
 </head>
 <body>
-  <h1>Light Scheduler</h1>
+<div class="wrap">
+  <header>
+    <h1>Light Scheduler</h1>
+    <span class="badge">M1 skeleton</span>
+  </header>
+  <div class="sub" id="schedule-line">loading…</div>
+  <div class="banner">Scheduling is <b>live</b>. This milestone ships a fixed demo
+    schedule (08:00&nbsp;→&nbsp;18:00&nbsp;→&nbsp;23:00). The visual timeline editor
+    lands in the next milestone.</div>
 
-  <div class="status-panel">
-    <div class="status-row">
-      <span>Light:</span>
-      <span id="light-id">—</span>
+  <div class="grid">
+    <div class="card">
+      <h2>Light</h2>
+      <div class="kv"><span>Entity</span><span id="light">—</span></div>
+      <div class="kv"><span>Status</span><span><span id="state-dot" class="dot idle"></span><span id="state">—</span></span></div>
     </div>
-    <div class="status-row">
-      <span>Schedule:</span>
-      <span id="schedule-name">—</span>
+    <div class="card">
+      <h2>Current (from HA)</h2>
+      <div class="big" id="brightness">—</div>
+      <div class="kv"><span>Color temp</span><span id="kelvin">—</span></div>
+      <div class="kv"><span>Color mode</span><span id="color-mode">—</span></div>
     </div>
-    <div class="status-row">
-      <span>Powered:</span>
-      <span id="powered">—</span>
+    <div class="card">
+      <h2>Last applied</h2>
+      <div class="big" id="last-when">—</div>
+      <div class="kv"><span>Value</span><span id="last-value">—</span></div>
+      <div class="kv"><span>At</span><span id="last-at">—</span></div>
     </div>
-    <div class="status-row">
-      <span>Brightness:</span>
-      <span id="brightness">—</span>
-    </div>
-    <div class="status-row">
-      <span>Color Temp:</span>
-      <span id="color-temp">—</span>
+    <div class="card">
+      <h2>Next keyframe</h2>
+      <div class="big" id="next-when">—</div>
+      <div class="kv"><span>Value</span><span id="next-value">—</span></div>
     </div>
   </div>
 
-  <div class="timeline">
-    <h3>Current Schedule</h3>
-    <div class="timeline-bar" id="timeline-bar">
-      <!-- Keyframe markers injected here -->
-    </div>
-  </div>
+  <table id="kf-table">
+    <thead><tr><th>When</th><th>Power</th><th>Brightness</th><th>Temp</th><th>Fade</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => (s == null ? "—" : String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])));
 
-  <div class="info">Auto-refreshes every 5 seconds</div>
+function fmtValue(v) {
+  if (!v) return "—";
+  const parts = [];
+  if (v.power === false) parts.push("off");
+  else parts.push(v.power ? "on" : "state");
+  if (v.brightness_pct != null) parts.push(v.brightness_pct + "%");
+  if (v.kelvin != null) parts.push(v.kelvin + "K");
+  return parts.join(" ");
+}
 
-  <script>
-    async function refresh() {
-      try {
-        const resp = await fetch('/api/state');
-        const state = await resp.json();
+function setKV(id, txt) { $(id).textContent = txt; }
 
-        document.getElementById('light-id').textContent = state.light_id;
-        document.getElementById('schedule-name').textContent = state.schedule_name;
-        document.getElementById('powered').textContent = state.powered ? 'Yes' : 'No';
-        document.getElementById('brightness').textContent = state.brightness || '—';
-        document.getElementById('color-temp').textContent = state.color_temp || '—';
-
-        const bar = document.getElementById('timeline-bar');
-        bar.innerHTML = '';
-        state.keyframes.forEach(kf => {
-          const [h, m] = kf.time.split(':').map(Number);
-          const pct = ((h * 60 + m) / 1440) * 100;
-          const marker = document.createElement('div');
-          marker.className = 'keyframe-marker';
-          marker.style.left = pct + '%';
-          marker.title = kf.id + ' ' + kf.time;
-          const label = document.createElement('div');
-          label.className = 'keyframe-label';
-          label.style.left = pct + '%';
-          label.textContent = kf.time;
-          bar.appendChild(marker);
-          bar.appendChild(label);
-        });
-      } catch (e) {
-        console.error('Failed to fetch state:', e);
-      }
+async function refresh() {
+  try {
+    const r = await fetch("/api/state", { cache: "no-store" });
+    const s = await r.json();
+    if (!s.active) {
+      $("state").textContent = "idle — no light configured";
+      $("state-dot").className = "dot idle";
+      $("light").textContent = s.light || "not set";
+      return;
     }
+    $("light").textContent = s.light || "—";
+    $("schedule-line").textContent =
+      (s.schedule.name || "schedule") + " · " + (s.schedule.mode || "daily") + " · " +
+      (s.keyframes.length) + " keyframe" + (s.keyframes.length === 1 ? "" : "s");
 
-    refresh();
-    setInterval(refresh, 5000);
-  </script>
+    const c = s.current || {};
+    const st = c.state || "unknown";
+    $("state").textContent = st === "on" ? "on" : (st === "off" ? "off" : st);
+    $("state-dot").className = "dot " + (st === "on" ? "on" : (st === "off" ? "off" : "err"));
+    setKV("brightness", c.brightness_pct != null ? c.brightness_pct + " %" : (c.detail || "—"));
+    setKV("kelvin", c.kelvin ? c.kelvin + " K" : "—");
+    setKV("color-mode", c.color_mode || "—");
+
+    const la = s.last_applied;
+    setKV("last-when", la ? la.when : "—");
+    setKV("last-value", la ? fmtValue(la.value) : "—");
+    setKV("last-at", la ? la.at : "—");
+
+    const nx = s.next;
+    setKV("next-when", nx ? nx.when : "—");
+    setKV("next-value", nx ? fmtValue(nx.value) : "—");
+
+    const tb = $("kf-table").querySelector("tbody");
+    tb.innerHTML = "";
+    (s.keyframes || []).forEach(k => {
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        "<td>" + esc(k.when) + "</td>" +
+        "<td>" + (k.power ? "on" : "off") + "</td>" +
+        "<td>" + (k.brightness_pct != null ? k.brightness_pct + "%" : "—") + "</td>" +
+        "<td>" + (k.kelvin != null ? k.kelvin + "K" : "—") + "</td>" +
+        "<td>" + (k.ramp ? k.ramp + "s" : "—") + "</td>";
+      tb.appendChild(tr);
+    });
+  } catch (e) {
+    $("state").textContent = "unreachable";
+    $("state-dot").className = "dot err";
+  }
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
 </body>
 </html>
