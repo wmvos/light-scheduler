@@ -54,12 +54,12 @@ def log(msg):
 def _ha_request(method, path, body=None):
     """Call the Supervisor API to proxy HA requests.
 
-    The Supervisor exposes /api/ (not /core/api/) which proxies the
-    Home Assistant external API.  This is the documented way for Apps
-    to talk to HA.
+    The Supervisor exposes /api/homeassistant/ which proxies the
+    Home Assistant external API for Apps.  This is the documented
+    way for Apps to talk to HA.
     """
     token = os.environ.get("SUPERVISOR_TOKEN", "")
-    url = "http://supervisor/api/" + path
+    url = "http://supervisor/api/homeassistant/" + path
     data = None
     headers = {"Authorization": "Bearer " + token}
     if body is not None:
@@ -79,8 +79,8 @@ def _ha_request(method, path, body=None):
 def _post_service(domain, service, data):
     """Call a HA service through the Supervisor API.
 
-    The Supervisor API at /api/services/{domain}/{service} expects the
-    payload wrapped in a 'data' key.
+    The Supervisor API at /api/homeassistant/services/{domain}/{service}
+    expects the payload wrapped in a 'data' key.
     """
     _ha_request("POST", "services/" + domain + "/" + service, {"data": data})
 
