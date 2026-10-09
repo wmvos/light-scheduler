@@ -1,5 +1,6 @@
 # https://developers.home-assistant.io/docs/apps/configuration#app-dockerfile
-FROM ghcr.io/home-assistant/{arch}-base:3.20
+ARG BUILD_FROM=ghcr.io/home-assistant/base:3.23
+FROM ${BUILD_FROM}
 
 # Python 3 from the Alpine base. The app is pure-stdlib (no pip), so this is
 # the only runtime dependency. We deliberately avoid asyncio/ssl-heavy modules
