@@ -8,12 +8,15 @@
 # HA config helpers.
 # ==============================================================================
 
-# Resolve the demo target light from the app option and export it for the
-# program. Guarded so a missing/empty option never kills the service; the
-# program also falls back to /data/options.json on its own.
-export LS_LIGHT="$(bashio::config --get light 2>/dev/null || true)"
-
-bashio::log.info "Light Scheduler starting (light='${LS_LIGHT:-<none>}')"
+# Only export LS_LIGHT if the user actually set a value.
+# If empty, the Python program will fall back to /data/options.json.
+_light="$(bashio::config --get light 2>/dev/null || true)"
+if [ -n "$_light" ]; then
+    export LS_LIGHT="$_light"
+    bashio::log.info "Light Scheduler starting (light='${LS_LIGHT}')"
+else
+    bashio::log.info "Light Scheduler starting (light option not set — will read from /data/options.json)"
+fi
 
 # Long-running: scheduler loop + ingress HTTP server.
 exec /usr/bin/light_scheduler.py
