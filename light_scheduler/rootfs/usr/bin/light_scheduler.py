@@ -66,6 +66,15 @@ def _ha_request(method, path, body=None):
     return json.loads(raw) if raw else {}
 
 
+def _post_service(domain, service, data):
+    """Call a HA service through the Supervisor core API.
+
+    The endpoint is /api/services/{domain}/{service} with the payload
+    containing all fields (including entity_id) in the body.
+    """
+    _ha_request("POST", "services/" + domain + "/" + service, {"data": data})
+
+
 def ha_get_state(entity):
     """Return the state object for *entity*, or a sentinel on failure."""
     if not entity:
@@ -84,15 +93,19 @@ def ha_set_light(entity, power, brightness_pct=None, kelvin=None, transition=0):
     """
     if not entity:
         return False
+    payload = {"entity_id": entity}
     if power:
-        fields = {"entity_id": entity, "transition": transition}
+        if transition:
+            payload["transition"] = transition
         if brightness_pct is not None:
-            fields["brightness_pct"] = brightness_pct
+            payload["brightness_pct"] = brightness_pct
         if kelvin is not None:
-            fields["kelvin"] = kelvin
-        _ha_request("POST", "services/light/turn_on", fields)
+            payload["kelvin"] = kelvin
+        _post_service("light", "turn_on", payload)
     else:
-        _ha_request("POST", "services/light/turn_off", {"entity_id": entity, "transition": transition})
+        if transition:
+            payload["transition"] = transition
+        _post_service("light", "turn_off", payload)
     return True
 
 
