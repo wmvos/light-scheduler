@@ -3,7 +3,7 @@ name: Light Scheduler
 version: "0.2.1"
 slug: light_scheduler
 description: Schedule on/off, brightness and color temperature of your lights on a visual daily/weekly timeline.
-url: "https://github.com/wmvos/light-scheduler/tree/main/light_scheduler"
+url: "https://github.com/wmvos/light-scheduler"
 arch:
   - aarch64
   - amd64
